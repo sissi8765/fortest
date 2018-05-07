@@ -1,0 +1,198 @@
+---
+title: "experimentcode0507"
+output: html_notebook
+---
+
+
+
+```{r echo=TRUE,eval=FALSE}
+#论文实验  期望利润法及EMP法比较
+library(plyr)
+library(ggthemes)
+library(DMwR)
+library(EMP)
+#library(car)
+library(gbm)
+library(caret)
+
+setwd("C:/自建/川大商学院/导师/R数据集")
+#公用函数
+#期望利润法
+#基于流失预测结果流失概率计算客户的期望利润
+ep<-function(x)
+{    #参数为流失预测中预测集计算的流失概率
+  n<-length(x)
+  m<-vector(mode="numeric",length=0)     
+  m<-x*190*0.3-10*(1-x)*0.9-1  
+  return (m)
+}
+
+#计算总利润TotalProfit，需自定义函数
+TP<-function(x){
+  n<-length(x)
+  percents<-vector(mode<-"numeric",length=0)
+  tp<-vector(mode<-"numeric",length=0)
+  tp<-cumsum(x)
+  nn<-c(1:n)
+  percents<-nn/n*100
+  out<-list(tp,percents)
+}
+
+#期望利润法对应的实际利润
+actual_profits<-function(x,m=50)
+{    
+  n<-length(x)
+  profit_s<-vector(mode="numeric", length=n)
+  ind_neg <- which(x==0)
+  ind_pos  <- which(x==1)
+  num_neg <- length(ind_neg)
+  num_pos <- length(ind_pos)
+  pi<-matrix(rbeta(num_pos*m,6,14), num_pos, m)
+  ri<-matrix(rbeta(num_neg*m,9,1), num_neg, m)
+  profit_s[ind_neg] <- rowMeans(-ri*10-1)  #非流失者
+  profit_s[ind_pos] <- rowMeans(pi*190-1)  #流失者
+  return (profit_s)
+}
+
+
+#数据集Churn.data_s
+load("KDD.RData")
+#SMOTE抽样
+lst_act<-list()    #训练集实际累积利润
+lst_act_per<-list()   #训练集实际累积利润对应百分比
+lst_exp<-list()  #训练集期望累积利润
+lst_exp_perplot<-list()  #训练集期望累积利润对应百分比
+lst_exp_per<-list()   #期望利润法最大利润百分比
+lst_exp_test<-list()  #测试集期望利润(>0)
+lst_stim_test<-list()   #测试集模拟利润
+lst_exp_per<-list()  #测试集最大利润下的客户比例
+lst_emp_act<-list()   #训练集emp法实际利润 （累积）
+lst_emp_emp<-list()   #训练集emp法emp利润（累积）
+lst_emp_per<-list()    #训练集emp法百分比记录（用于求均值）
+lst_emp_stim<-list()   #emp法测试集模拟利润
+lst_emp_EMP<-list()   #emp法测试集emp利润
+
+
+for(i in 1:10)
+{
+  sub<-createDataPartition(Churn.data_s$churn,p=0.75,list=FALSE)
+  trainset<-Churn.data_s[sub,]
+  testset<-Churn.data_s[-sub,]
+  trainset<-SMOTE(churn~.,trainset,perc.over=100,perc.under=200)
+  
+  #训练模型
+  trainset$churn <- ifelse(trainset$churn== "1",1,0)
+  churn.gbm <-gbm(formula = churn ~ .,distribution = "bernoulli",
+                  data = trainset,n.trees = 1000,interaction.depth = 7,
+                  shrinkage = 0.01,cv.folds = 3)
+  
+  chst<-trainset$churn
+  churnP<- predict(churn.gbm,trainset,type="response") 
+  newsubtset<-cbind(chst,churnP)
+  table_1<-as.data.frame(newsubtset)
+  table_2<-arrange(table_1,desc(churnP))
+  
+  #50次计算实际利润,期望利润 -期望利润法
+  actualprofits <- actual_profits(table_2$chst) 
+  actual_total_tr<-TP(actualprofits)  #训练集每次划分后计算累积利润及对应百分比
+  lst_act[[i]]<-actual_total_tr[[1]] #每次划分下的累积值存入列表
+  lst_act_per[[i]]<-actual_total_tr[[2]]  #百分比  
+  
+  #期望利润求均值
+  expect<-ep(churnP)
+  total_exp_tr<-TP(expect)  #每次划分后训练集累积期望利润及对应百分比
+  lst_exp[[i]]<-total_exp_tr[[1]]
+  lst_exp_perplot[[i]]<-total_exp_tr[[2]] #百分比
+  
+  #训练集期望最大利润的目标客户比例
+  optper=length(expect[expect>0])/length(expect)
+  lst_exp_per[[i]]<-optper
+  
+  
+  
+  #测试集
+  #预测
+  churn.predict <- predict(churn.gbm,testset,type="response")
+  chrate<-churn.predict 
+  chst_te<- ifelse(testset$churn== "1",1,0) #测试集客户实际状态
+  table_te_1<-as.data.frame(cbind(chst_te,chrate))
+  table_te_2<-arrange(table_te_1,desc(chrate))
+  #profit of trainningdata 
+  newlength_ex=floor(optper*length(chrate)) #训练集目标客户比例在测试集中的目标客户数
+  expect_test<-ep(table_te_2$chrate[1:newlength_ex])
+  expect_test_max<-sum(expect_test)   #目标客户的最大总利润
+  
+  #选取期望利润大于0的客户对应的流失概率
+  chst_te_1<-table_te_2$chst_te[1:newlength_ex]       
+  stim_test_max<-sum(actual_profits(chst_te_1)) #目标客户的模拟利润
+
+  #50次计算结果累积和按行存储-一行一次计算结果
+  lst_exp_test[[i]]<-expect_test_max #期望利润法总利润
+  lst_stim_test[[i]]<-stim_test_max  #模拟利润总利润
+  
+  #EMP法
+  EMP_tr<-empChurn(churnP, trainset$churn)
+  newlength<-floor(length(churnP)*(EMP_tr$EMPfrac)) #EMP下目标客户规模
+  lst_emp_per[[i]]<-EMP_tr$EMPfrac  #记录每次目标比例
+  
+  #EMP下测试集模拟利润
+  emp_stim<-sum(actual_profits(table_te_2$chst_te[1:newlength]))
+  #每次划分下经50次计算的模拟利润和
+  lst_emp_stim<-list(lst_emp_stim,emp_stim)
+  
+  EMP_emp<-EMP_tr$EMP*(floor(length(churn.predict)*(EMP_tr$EMPfrac))) #EMP法每次划分下EMP总利润
+  lst_emp_EMP<-list(lst_emp_EMP,EMP_emp) 
+  
+} #endfor
+
+#训练集--期望利润法-10次划分期望利润
+exp_tr<-matrix(unlist(lst_exp),10,length(expect),byrow=TRUE)
+exp_trM<-colMeans(exp_tr) #累积期望利润
+exp_per_tr1<-matrix(unlist(lst_exp_perplot),10,length(total_exp_tr[[2]]),byrow=TRUE)
+exp_per_tr<-colMeans(exp_per_tr1)
+
+#训练集--期望利润法-10次划分对应实际利润
+act_tr<-matrix(unlist(lst_act),10,length(actualprofits),byrow=TRUE)
+act_trM<-colMeans(act_tr) #累计实际利润
+act_per_tr1<-matrix(unlist(lst_act_per),10,length(actual_total_tr[[2]]),byrow=TRUE) #对应累积百分比
+act_per_tr<-colMeans(act_per_tr1) #累积百分比
+
+#模拟图（训练集期望利润法下的利润与实际利润图）
+#x11(width = 6, height = 4)
+plot(act_per_tr,act_trM,type="l",main="Churn.data_s of expected profits",
+     xlab="percentile",ylab="profit") #实际利润
+lines(exp_per_tr,exp_trM,type="l",lty=2)  #预测利润
+abline(0,0)
+legend("bottomright", inset=0.05, lty=c(1,2),c("actual profit","predict profit"))
+
+
+#测试集--期望利润法利润及模拟利润，百分比
+exp_te<-matrix(unlist(lst_exp_test),10,1,byrow=TRUE)
+exp_teMax<-mean(exp_te) #最大期望利润之和
+exp_stim<-mean(matrix(unlist(lst_stim_test),10,1,byrow=TRUE))
+exp_percent<-mean(matrix(unlist(lst_exp_per),10,1,byrow=TRUE))  #10次划分后期望利润法最大利润下的平均客户比例
+
+
+#测试集--emp法emp利润及模拟利润，百分比
+emp_stim_sum<-mean(matrix(unlist(lst_emp_stim),10,1,byrow=TRUE))
+#emp_stim_sum<-mean(emp_stim_1) #emp目标比例下模拟总利润
+EMP_emp_last<-mean(matrix(unlist(lst_emp_EMP),10,length(EMP_emp),byrow=TRUE))  #emp法10次划分的平均EMP利润
+emp_percent<-mean(matrix(unlist(lst_emp_per),10,1,byrow=TRUE))  
+
+
+#最终结果
+#期望利润法：
+exp_percent  #最大利润下的客户比例，
+exp_stim   #测试集目标客户的模拟总利润
+exp_teMax # 测试集最大期望利润之和
+
+#emp法
+emp_stim_sum  #emp法下目标规模对应的模拟总利润
+EMP_emp_last     #emp法EMP利润
+emp_percent  #EMP法目标客户比例
+
+
+
+
+
+```
