@@ -30,8 +30,8 @@ ep<-function(x)
 #计算总利润TotalProfit，需自定义函数
 TP<-function(x){
   n<-length(x)
-  percents<-vector(mode<-"numeric",length=0)
-  tp<-vector(mode<-"numeric",length=0)
+  percents<-vector(mode="numeric",length=0)
+  tp<-vector(mode="numeric",length=0)
   tp<-cumsum(x)
   nn<-c(1:n)
   percents<-nn/n*100
@@ -84,10 +84,10 @@ for(i in 1:10)
   trainset$churn <- ifelse(trainset$churn== "1",1,0)
   churn.gbm <-gbm(formula = churn ~ .,distribution = "bernoulli",
                   data = trainset,n.trees = 1000,interaction.depth = 7,
-                  shrinkage = 0.01,cv.folds = 3)
+                  shrinkage = 0.01,cv.folds=0)
   
   chst<-trainset$churn
-  churnP<- predict(churn.gbm,trainset,type="response") 
+  churnP<- predict(churn.gbm,trainset,n.trees = 1000,type="response") 
   newsubtset<-cbind(chst,churnP)
   table_1<-as.data.frame(newsubtset)
   table_2<-arrange(table_1,desc(churnP))
@@ -99,31 +99,28 @@ for(i in 1:10)
   lst_act_per[[i]]<-actual_total_tr[[2]]  #百分比  
   
   #期望利润求均值
-  expect<-ep(churnP)
+  expect<-ep(table_2$churnP)
   total_exp_tr<-TP(expect)  #每次划分后训练集累积期望利润及对应百分比
   lst_exp[[i]]<-total_exp_tr[[1]]
   lst_exp_perplot[[i]]<-total_exp_tr[[2]] #百分比
   
-  #训练集期望最大利润的目标客户比例
-  optper=length(expect[expect>0])/length(expect)
-  lst_exp_per[[i]]<-optper
-  
-  
   
   #测试集
   #预测
-  churn.predict <- predict(churn.gbm,testset,type="response")
+  churn.predict <- predict(churn.gbm,testset,n.trees = 1000,type="response")
   chrate<-churn.predict 
   chst_te<- ifelse(testset$churn== "1",1,0) #测试集客户实际状态
   table_te_1<-as.data.frame(cbind(chst_te,chrate))
   table_te_2<-arrange(table_te_1,desc(chrate))
-  #profit of trainningdata 
-  newlength_ex=floor(optper*length(chrate)) #训练集目标客户比例在测试集中的目标客户数
-  expect_test<-ep(table_te_2$chrate[1:newlength_ex])
+
+  #测试集中的目标客户比例及总利润
+  expect_test_1<-ep(table_te_2$chrate)
+  expect_test<-expect_test_1[expect_test_1>0]  #选取期望利润大于0的客户 
   expect_test_max<-sum(expect_test)   #目标客户的最大总利润
-  
+  exp_per<-(length(expect_test)/length(chrate))   #测试集下最大化利润--客户比例
+  lst_exp_per[[i]]<-exp_per
   #选取期望利润大于0的客户对应的流失概率
-  chst_te_1<-table_te_2$chst_te[1:newlength_ex]       
+  chst_te_1<-table_te_2$chst_te[1:length(expect_test)]       
   stim_test_max<-sum(actual_profits(chst_te_1)) #目标客户的模拟利润
 
   #50次计算结果累积和按行存储-一行一次计算结果
@@ -138,10 +135,10 @@ for(i in 1:10)
   #EMP下测试集模拟利润
   emp_stim<-sum(actual_profits(table_te_2$chst_te[1:newlength]))
   #每次划分下经50次计算的模拟利润和
-  lst_emp_stim<-list(lst_emp_stim,emp_stim)
+  lst_emp_stim[[i]]<-emp_stim
   
-  EMP_emp<-EMP_tr$EMP*(floor(length(churn.predict)*(EMP_tr$EMPfrac))) #EMP法每次划分下EMP总利润
-  lst_emp_EMP<-list(lst_emp_EMP,EMP_emp) 
+  EMP_emp<-EMP_tr$EMP*(floor(length(churn.predict)*(EMP_tr$EMPfrac)))       #EMP法每次划分下EMP总利润
+  lst_emp_EMP[[i]]<-EMP_emp
   
 } #endfor
 
